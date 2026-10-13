@@ -1,6 +1,0 @@
-{
-  "name": "Hacker News Best Stories API",
-  "description": "Production-grade ASP.NET Core RESTful API and live test bench to retrieve the best n Hacker News stories with caching and overload protection.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
