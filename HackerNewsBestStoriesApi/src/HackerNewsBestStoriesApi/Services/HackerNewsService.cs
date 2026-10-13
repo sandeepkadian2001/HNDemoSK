@@ -1,6 +1,7 @@
 namespace HackerNewsBestStoriesApi.Services;
 
 using System.Collections.Concurrent;
+using System.Threading;
 using System.Net.Http.Json;
 using HackerNewsBestStoriesApi.Models;
 using HackerNewsBestStoriesApi.Options;
@@ -21,7 +22,8 @@ public class HackerNewsService : IHackerNewsService, IDisposable
     private readonly HackerNewsOptions _options;
     private readonly ILogger<HackerNewsService> _logger;
     private readonly SemaphoreSlim _concurrencySemaphore;
-    private readonly ConcurrentDictionary<int, Task<StoryDto?>> _inFlightItemTasks = new();
+    private readonly ConcurrentDictionary<int, Lazy<Task<StoryDto?>>> _inFlightItemTasks = new();
+    private readonly Lazy<Task<IReadOnlyList<int>>> _inFlightBestStoryIds;
 
     public HackerNewsService(
         IHttpClientFactory httpClientFactory,
@@ -49,6 +51,7 @@ public class HackerNewsService : IHackerNewsService, IDisposable
 
         int maxConcurrency = Math.Max(1, _options.MaxConcurrentOutgoingRequests);
         _concurrencySemaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        _inFlightBestStoryIds = new Lazy<Task<IReadOnlyList<int>>>(() => FetchAndCacheBestStoryIdsAsync(), LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public async Task<IReadOnlyList<StoryDto>> GetBestStoriesAsync(int n, CancellationToken cancellationToken = default)
@@ -66,9 +69,9 @@ public class HackerNewsService : IHackerNewsService, IDisposable
             return Array.Empty<StoryDto>();
         }
 
-        // We fetch enough stories from the best list to satisfy 'n'
+        // We fetch enough stories from the best list to satisfy 'n', plus a small buffer for invalid/deleted stories
         // Hacker News /v0/beststories.json typically returns up to 200 or 500 IDs
-        var idsToFetch = storyIds.Take(Math.Max(n, Math.Min(storyIds.Count, n + 20))).ToList();
+        var idsToFetch = storyIds.Take(Math.Min(storyIds.Count, n + 5)).ToList();
 
         // 2. Fetch all story details concurrently, subject to SemaphoreSlim throttling and SingleFlight caching
         var tasks = idsToFetch.Select(id => GetStoryByIdAsync(id, cancellationToken));
@@ -112,41 +115,32 @@ public class HackerNewsService : IHackerNewsService, IDisposable
         }
     }
 
-    private async Task<IReadOnlyList<int>> GetBestStoryIdsAsync(CancellationToken cancellationToken)
-    {
-        if (_cache.TryGetValue(BestStoryIdsCacheKey, out IReadOnlyList<int>? cachedIds) && cachedIds != null)
-        {
-            return cachedIds;
-        }
+     private async Task<IReadOnlyList<int>> GetBestStoryIdsAsync(CancellationToken cancellationToken)
+     {
+         if (_cache.TryGetValue(BestStoryIdsCacheKey, out IReadOnlyList<int>? cachedIds) && cachedIds != null)
+         {
+             return cachedIds;
+         }
 
-        var fetchedIds = await FetchBestStoryIdsFromApiAsync(cancellationToken);
-        if (fetchedIds != null && fetchedIds.Count > 0)
-        {
-            _cache.Set(
-                BestStoryIdsCacheKey,
-                fetchedIds,
-                TimeSpan.FromMinutes(_options.BestStoriesCacheDurationMinutes));
+         // SingleFlight coalescing: Ensure concurrent requests for best story IDs share the same fetch
+         return await _inFlightBestStoryIds.Value;
+     }
 
-            // Load all stories returned by FetchBestStoryIdsFromApiAsync to warm the cache for subsequent queries
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var tasks = fetchedIds.Select(id => GetStoryByIdAsync(id, CancellationToken.None));
-                    await Task.WhenAll(tasks);
-                    _logger.LogInformation("Completed loading all {Count} stories into warm cache.", fetchedIds.Count);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Background warming of all fetched story items encountered an error.");
-                }
-            });
+     private async Task<IReadOnlyList<int>> FetchAndCacheBestStoryIdsAsync()
+     {
+         var fetchedIds = await FetchBestStoryIdsFromApiAsync(CancellationToken.None);
+         if (fetchedIds != null && fetchedIds.Count > 0)
+         {
+             _cache.Set(
+                 BestStoryIdsCacheKey,
+                 fetchedIds,
+                 TimeSpan.FromMinutes(_options.BestStoriesCacheDurationMinutes));
 
-            return fetchedIds;
-        }
+             return fetchedIds;
+         }
 
-        return Array.Empty<int>();
-    }
+         return Array.Empty<int>();
+     }
 
     private async Task<IReadOnlyList<int>> FetchBestStoryIdsFromApiAsync(CancellationToken cancellationToken)
     {
@@ -162,7 +156,7 @@ public class HackerNewsService : IHackerNewsService, IDisposable
         }
     }
 
-    public async Task<StoryDto?> GetStoryByIdAsync(int id, CancellationToken cancellationToken = default)
+     public async Task<StoryDto?> GetStoryByIdAsync(int id, CancellationToken cancellationToken = default)
     {
         string cacheKey = $"{StoryItemCacheKeyPrefix}{id}";
 
@@ -172,57 +166,58 @@ public class HackerNewsService : IHackerNewsService, IDisposable
             return cachedStory;
         }
 
-        // SingleFlight coalescing: Ensure multiple concurrent requests for the same ID share the same task
-        return await _inFlightItemTasks.GetOrAdd(id, async itemId =>
+        // SingleFlight coalescing: Ensure multiple concurrent requests for the same ID share the same task.
+        // Keep entries in dictionary indefinitely so all concurrent requests for the same ID execute
+        // the fetch exactly once (Lazy factory runs only once with ExecutionAndPublication mode).
+        var lazyTask = _inFlightItemTasks.GetOrAdd(id, _ => new Lazy<Task<StoryDto?>>(() => FetchAndCacheStoryAsync(id), LazyThreadSafetyMode.ExecutionAndPublication));
+        return await lazyTask.Value;
+    }
+
+    private async Task<StoryDto?> FetchAndCacheStoryAsync(int itemId)
+    {
+        string cacheKey = $"{StoryItemCacheKeyPrefix}{itemId}";
+
+        try
         {
+            await _concurrencySemaphore.WaitAsync();
             try
             {
-                await _concurrencySemaphore.WaitAsync(cancellationToken);
-                try
+                // Check cache again in case another thread populated it while waiting for semaphore
+                if (_cache.TryGetValue(cacheKey, out StoryDto? storyUnderLock))
                 {
-                    // Check cache again in case another thread populated it while waiting for semaphore
-                    if (_cache.TryGetValue(cacheKey, out StoryDto? storyUnderLock))
-                    {
-                        return storyUnderLock;
-                    }
-
-                    var rawItem = await _httpClient.GetFromJsonAsync<HackerNewsItem>(
-                        $"item/{itemId}.json",
-                        cancellationToken);
-
-                    if (rawItem == null || rawItem.Deleted || rawItem.Dead || rawItem.Type != "story")
-                    {
-                        return null;
-                    }
-
-                    var dto = MapToDto(rawItem);
-
-                    _cache.Set(
-                        cacheKey,
-                        dto,
-                        new MemoryCacheEntryOptions
-                        {
-                            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(_options.StoryItemCacheDurationMinutes),
-                            SlidingExpiration = TimeSpan.FromMinutes(2)
-                        });
-
-                    return dto;
+                    return storyUnderLock;
                 }
-                finally
+
+                var rawItem = await _httpClient.GetFromJsonAsync<HackerNewsItem>($"item/{itemId}.json", CancellationToken.None);
+
+                if (rawItem == null || rawItem.Deleted || rawItem.Dead || rawItem.Type != "story")
                 {
-                    _concurrencySemaphore.Release();
+                    return null;
                 }
-            }
-            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
-            {
-                _logger.LogWarning(ex, "Failed to fetch details for Hacker News item ID {ItemId}", itemId);
-                return null;
+
+                var dto = MapToDto(rawItem);
+
+                _cache.Set(
+                    cacheKey,
+                    dto,
+                    new MemoryCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(_options.StoryItemCacheDurationMinutes),
+                        SlidingExpiration = TimeSpan.FromMinutes(2)
+                    });
+
+                return dto;
             }
             finally
             {
-                _inFlightItemTasks.TryRemove(itemId, out _);
+                _concurrencySemaphore.Release();
             }
-        });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to fetch details for Hacker News item ID {ItemId}", itemId);
+            return null;
+        }
     }
 
     private static StoryDto MapToDto(HackerNewsItem item)
