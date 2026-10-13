@@ -37,7 +37,6 @@ public class StoriesController : ControllerBase
     /// <response code="400">If the parameter 'n' is less than 1 or exceeds maximum limit.</response>
     /// <response code="500">If an unhandled server error occurs.</response>
     [HttpGet("best")]
-    [HttpGet("/api/beststories")]
     [ProducesResponseType(typeof(IEnumerable<StoryDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]

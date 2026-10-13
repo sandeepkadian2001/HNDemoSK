@@ -29,7 +29,6 @@ The API exposes a RESTful endpoint to retrieve the top $n$ stories sorted by sco
 ```http
 GET /api/stories/best?n=10
 ```
-*(Alias: `GET /api/beststories?n=10`)*
 
 ### Exact Response Contract
 ```json
@@ -158,7 +157,6 @@ Tests cover:
 ## API Specification & Examples
 
 ### Endpoint: `GET /api/stories/best`
-Alternative route: `GET /api/beststories`
 
 #### Query Parameters:
 | Parameter | Type | Required | Default | Description |

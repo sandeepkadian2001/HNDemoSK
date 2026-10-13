@@ -271,53 +271,6 @@ const swaggerSpec = {
         },
       },
     },
-    '/api/beststories': {
-      get: {
-        tags: ['Stories'],
-        summary: 'Convenience route alias for retrieving the best stories.',
-        operationId: 'GetBestStoriesAlias',
-        parameters: [
-          {
-            name: 'n',
-            in: 'query',
-            description: 'The number of best stories to retrieve (must be between 1 and 200).',
-            required: false,
-            schema: {
-              type: 'integer',
-              format: 'int32',
-              default: 10,
-              minimum: 1,
-              maximum: 200,
-            },
-          },
-        ],
-        responses: {
-          '200': {
-            description: 'Returns the array of best stories sorted by score descending.',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'array',
-                  items: {
-                    $ref: '#/components/schemas/StoryDto',
-                  },
-                },
-              },
-            },
-          },
-          '400': {
-            description: 'If the parameter n is less than 1 or exceeds maximum limit.',
-            content: {
-              'application/json': {
-                schema: {
-                  $ref: '#/components/schemas/ProblemDetails',
-                },
-              },
-            },
-          },
-        },
-      },
-    },
     '/health': {
       get: {
         tags: ['Health'],
@@ -484,7 +437,16 @@ async function startServer() {
   };
 
   app.get('/api/stories/best', handleBestStories);
-  app.get('/api/beststories', handleBestStories);
+
+  // 404 for unmapped API routes
+  app.all('/api/*', (_req: Request, res: Response) => {
+    res.status(404).json({
+      type: 'https://tools.ietf.org/html/rfc7231#section-6.5.4',
+      title: 'Not Found',
+      status: 404,
+      detail: 'The requested API endpoint was not found.',
+    });
+  });
 
   // Mount Vite middleware for serving Swagger UI
   const isProd = process.env.NODE_ENV === 'production';
