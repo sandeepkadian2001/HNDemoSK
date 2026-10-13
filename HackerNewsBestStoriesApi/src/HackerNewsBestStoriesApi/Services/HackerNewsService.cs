@@ -24,6 +24,19 @@ public class HackerNewsService : IHackerNewsService, IDisposable
     private readonly ConcurrentDictionary<int, Task<StoryDto?>> _inFlightItemTasks = new();
 
     public HackerNewsService(
+        IHttpClientFactory httpClientFactory,
+        IMemoryCache cache,
+        IOptions<HackerNewsOptions> options,
+        ILogger<HackerNewsService> logger)
+        : this(
+            (httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory))).CreateClient("HackerNews"),
+            cache,
+            options,
+            logger)
+    {
+    }
+
+    public HackerNewsService(
         HttpClient httpClient,
         IMemoryCache cache,
         IOptions<HackerNewsOptions> options,
@@ -76,7 +89,7 @@ public class HackerNewsService : IHackerNewsService, IDisposable
     {
         try
         {
-            _logger.LogInformation("Warming up Hacker News story cache...");
+            _logger.LogInformation("Warming up Hacker News story cache with all best stories...");
             var storyIds = await FetchBestStoryIdsFromApiAsync(cancellationToken);
             if (storyIds != null && storyIds.Count > 0)
             {
@@ -86,12 +99,11 @@ public class HackerNewsService : IHackerNewsService, IDisposable
                     storyIds,
                     TimeSpan.FromMinutes(_options.BestStoriesCacheDurationMinutes));
 
-                // Pre-fetch top 100 story details to ensure zero-latency hits
-                var warmUpIds = storyIds.Take(100).ToList();
-                var tasks = warmUpIds.Select(id => GetStoryByIdAsync(id, cancellationToken));
+                // Load ALL stories returned by FetchBestStoryIdsFromApiAsync to warm the cache to speed up subsequent queries
+                var tasks = storyIds.Select(id => GetStoryByIdAsync(id, cancellationToken));
                 await Task.WhenAll(tasks);
 
-                _logger.LogInformation("Successfully warmed cache with {Count} best stories.", warmUpIds.Count);
+                _logger.LogInformation("Successfully warmed cache with all {Count} best stories.", storyIds.Count);
             }
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
@@ -114,6 +126,22 @@ public class HackerNewsService : IHackerNewsService, IDisposable
                 BestStoryIdsCacheKey,
                 fetchedIds,
                 TimeSpan.FromMinutes(_options.BestStoriesCacheDurationMinutes));
+
+            // Load all stories returned by FetchBestStoryIdsFromApiAsync to warm the cache for subsequent queries
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var tasks = fetchedIds.Select(id => GetStoryByIdAsync(id, CancellationToken.None));
+                    await Task.WhenAll(tasks);
+                    _logger.LogInformation("Completed loading all {Count} stories into warm cache.", fetchedIds.Count);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Background warming of all fetched story items encountered an error.");
+                }
+            });
+
             return fetchedIds;
         }
 

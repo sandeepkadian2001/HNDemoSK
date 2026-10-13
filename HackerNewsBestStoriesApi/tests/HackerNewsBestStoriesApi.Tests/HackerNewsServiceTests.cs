@@ -304,4 +304,41 @@ public class HackerNewsServiceTests
             $"HttpClient was invoked {totalHttpClientCalls} times. Expected <= 225 under 10,000 concurrent calls with dynamic n in [1, 200].");
         Assert.Equal(1, handler.InvocationsByEndpoint["/v0/beststories.json"]);
     }
+
+    [Fact]
+    public async Task WarmUpCacheAsync_LoadsAllStoriesReturnedByFetchBestStoryIdsFromApiAsync()
+    {
+        // Arrange
+        var handler = new CountingHttpMessageHandler();
+        var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://hacker-news.firebaseio.com/v0/")
+        };
+
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var options = Microsoft.Extensions.Options.Options.Create(new HackerNewsOptions
+        {
+            BaseUrl = "https://hacker-news.firebaseio.com/v0/",
+            StoryItemCacheDurationMinutes = 10,
+            BestStoriesCacheDurationMinutes = 2,
+            MaxConcurrentOutgoingRequests = 20,
+            MaxStoryLimit = 200
+        });
+
+        using var service = new HackerNewsService(httpClient, cache, options, NullLogger<HackerNewsService>.Instance);
+
+        // Act: Execute cache warmup
+        await service.WarmUpCacheAsync();
+
+        // Assert: Best stories IDs were fetched (1 call) and ALL stories returned were loaded into cache
+        Assert.Equal(1, handler.InvocationsByEndpoint["/v0/beststories.json"]);
+        Assert.True(handler.TotalInvocations > 1, "Warmup must load all story details into cache.");
+
+        // Subsequent query must hit the warm cache immediately with ZERO additional HttpClient calls
+        int invocationsBeforeQuery = handler.TotalInvocations;
+        var stories = await service.GetBestStoriesAsync(50);
+
+        Assert.Equal(50, stories.Count);
+        Assert.Equal(invocationsBeforeQuery, handler.TotalInvocations); // Zero new network calls!
+    }
 }

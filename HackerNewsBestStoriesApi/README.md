@@ -56,8 +56,7 @@ Servicing large volumes of concurrent consumer traffic while querying an upstrea
 To eliminate these risks, the application implements a multi-tiered defense:
 
 ### 1. Proactive Background Cache Warming (`StoryCacheBackgroundRefresher`)
-- An `IHostedService` / `BackgroundService` runs asynchronously in the background every 60 seconds (configurable).
-- It queries the upstream `/v0/beststories.json` and pre-loads the top story details into an in-memory cache (`IMemoryCache`).
+- It queries the upstream `/v0/beststories.json` and pre-loads all story items returned into memory (`IMemoryCache`), ensuring all subsequent queries (even for maximum $n=200$) hit warm memory instantly.
 - **Result**: Incoming consumer requests are answered directly from local memory in **< 2ms**, completely isolating Hacker News from incoming traffic spikes.
 
 ### 2. Bounded Concurrency Throttling (`SemaphoreSlim`)

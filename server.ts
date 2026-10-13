@@ -78,9 +78,8 @@ class HackerNewsBackendService {
           expiresAt: Date.now() + 2 * 60 * 1000, // 2 minutes
         };
 
-        // Warm up top 50 items
-        const warmUpIds = ids.slice(0, 50);
-        await Promise.all(warmUpIds.map((id) => this.getStoryById(id)));
+        // Warm up ALL stories returned by fetchBestStoryIdsFromUpstream to speed up subsequent queries
+        await Promise.all(ids.map((id) => this.getStoryById(id)));
       }
     } catch (err) {
       console.error('[HackerNewsBackendService] Background warm-up failed:', err);

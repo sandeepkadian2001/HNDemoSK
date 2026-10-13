@@ -20,8 +20,8 @@ var hnOptions = builder.Configuration
 // 2. Add Caching
 builder.Services.AddMemoryCache();
 
-// 3. Configure Typed HttpClient with Polly Resilience Policies (Retry + Circuit Breaker + Timeout)
-builder.Services.AddHttpClient<IHackerNewsService, HackerNewsService>(client =>
+// 3. Configure Named HttpClient with Polly Resilience Policies (Retry + Circuit Breaker + Timeout)
+builder.Services.AddHttpClient("HackerNews", client =>
 {
     client.BaseAddress = new Uri(hnOptions.BaseUrl);
     client.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -29,6 +29,10 @@ builder.Services.AddHttpClient<IHackerNewsService, HackerNewsService>(client =>
 })
 .AddPolicyHandler(GetRetryPolicy())
 .AddPolicyHandler(GetCircuitBreakerPolicy());
+
+// Register HackerNewsService as a Singleton so SemaphoreSlim and in-flight request coalescing
+// are process-wide singletons shared across all concurrent requests.
+builder.Services.AddSingleton<IHackerNewsService, HackerNewsService>();
 
 // 4. Register Background Cache Refresher Service
 builder.Services.AddHostedService<StoryCacheBackgroundRefresher>();
