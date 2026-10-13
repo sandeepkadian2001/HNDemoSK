@@ -1,10 +1,16 @@
 namespace HackerNewsBestStoriesApi.Tests;
 
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
+using System.Text;
+using System.Text.Json;
+using HackerNewsBestStoriesApi.Models;
 using HackerNewsBestStoriesApi.Options;
 using HackerNewsBestStoriesApi.Services;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using RichardSzalay.MockHttp;
@@ -178,5 +184,124 @@ public class HackerNewsServiceTests
         // Assert
         Assert.Single(result);
         Assert.Equal("https://news.ycombinator.com/item?id=301", result[0].Uri);
+    }
+
+    /// <summary>
+    /// Custom delegating handler that intercepts and counts every outbound HTTP request issued by HttpClient.
+    /// </summary>
+    private class CountingHttpMessageHandler : HttpMessageHandler
+    {
+        private int _totalInvocations;
+        public int TotalInvocations => _totalInvocations;
+
+        public ConcurrentDictionary<string, int> InvocationsByEndpoint { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _totalInvocations);
+            var uri = request.RequestUri?.PathAndQuery ?? request.RequestUri?.ToString() ?? "unknown";
+            InvocationsByEndpoint.AddOrUpdate(uri, 1, (_, count) => count + 1);
+
+            // Mock response for beststories.json with 250 candidate IDs
+            if (uri.Contains("beststories.json"))
+            {
+                var ids = Enumerable.Range(1001, 250).ToArray();
+                var json = JsonSerializer.Serialize(ids);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                });
+            }
+
+            // Mock responses for individual items
+            if (uri.Contains("item/"))
+            {
+                var parts = uri.Split('/');
+                var filename = parts[^1];
+                var idStr = filename.Replace(".json", "");
+                int.TryParse(idStr, out int id);
+
+                var item = new HackerNewsItem
+                {
+                    Id = id,
+                    Type = "story",
+                    By = $"user_{id}",
+                    Time = 1570887781 + id,
+                    Score = 3000 - (id - 1000) * 10,
+                    Title = $"Story Title #{id}",
+                    Url = $"https://example.com/story/{id}",
+                    Descendants = 50 + id % 25
+                };
+
+                var json = JsonSerializer.Serialize(item);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+    }
+
+    [Fact]
+    public async Task Simultaneous_10000_Service_Calls_Should_Not_Overload_Upstream_HttpClient()
+    {
+        // ARRANGE: Set up counting handler and service
+        const int concurrentRequests = 10000;
+
+        var handler = new CountingHttpMessageHandler();
+        var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://hacker-news.firebaseio.com/v0/")
+        };
+
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var options = Microsoft.Extensions.Options.Options.Create(new HackerNewsOptions
+        {
+            BaseUrl = "https://hacker-news.firebaseio.com/v0/",
+            StoryItemCacheDurationMinutes = 10,
+            BestStoriesCacheDurationMinutes = 2,
+            MaxConcurrentOutgoingRequests = 20,
+            MaxStoryLimit = 200
+        });
+
+        using var service = new HackerNewsService(httpClient, cache, options, NullLogger<HackerNewsService>.Instance);
+
+        // ACT: Fire 10,000 simultaneous asynchronous service calls concurrently,
+        // with requestedN dynamically varying between 1 and 200 for every single call
+        var tasks = Enumerable.Range(0, concurrentRequests).Select(i =>
+        {
+            // Dynamic value strictly between 1 and 200 for each of the 10,000 requests
+            int dynamicN = (i % 200) + 1;
+            return Task.Run(async () =>
+            {
+                var stories = await service.GetBestStoriesAsync(dynamicN);
+                return (RequestedN: dynamicN, Stories: stories);
+            });
+        }).ToList();
+
+        var results = await Task.WhenAll(tasks);
+
+        // ASSERT: Validate all 10,000 calls succeeded and returned their specific dynamic N
+        Assert.Equal(concurrentRequests, results.Length);
+        foreach (var (requestedN, stories) in results)
+        {
+            Assert.Equal(requestedN, stories.Count);
+            for (int j = 0; j < stories.Count - 1; j++)
+            {
+                Assert.True(stories[j].Score >= stories[j + 1].Score, "Stories must be sorted in descending order of score.");
+            }
+        }
+
+        // METRICS: Note down how many times HttpClient-based API was invoked
+        int totalHttpClientCalls = handler.TotalInvocations;
+
+        // Even though 10,000 concurrent calls requested dynamic N from 1 to 200
+        // (totaling over 1,000,000 potential item fetches without caching),
+        // the HttpClient was invoked at most once per distinct story ID (<= 225 calls).
+        Assert.True(totalHttpClientCalls <= 225,
+            $"HttpClient was invoked {totalHttpClientCalls} times. Expected <= 225 under 10,000 concurrent calls with dynamic n in [1, 200].");
+        Assert.Equal(1, handler.InvocationsByEndpoint["/v0/beststories.json"]);
     }
 }

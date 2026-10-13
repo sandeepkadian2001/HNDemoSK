@@ -146,11 +146,17 @@ dotnet test
 ```
 
 Tests cover:
-- Parameter validation for `n <= 0` and `n > MaxLimit`.
-- Correct sorting by `score` in descending order.
-- Filtering of non-story items (`type == "comment"`, `deleted == true`, `dead == true`).
-- Fallback URI resolution for internal discussion posts (Ask HN / Show HN without external URL).
-- ISO 8601 UTC date string format (`yyyy-MM-ddTHH:mm:ss+00:00`).
+- **Load Test under 10,000 Simultaneous Calls with Dynamic `n` (1–200)**: Simulates 10,000 concurrent requests where each call requests a dynamic value of $n$ varying between 1 and 200, verifying that upstream `HttpClient` invocations are capped ($\le 225$ calls), preventing over 1,000,000 potential requests.
+- **Validation**: Parameter validation for `n <= 0` and `n > MaxLimit`.
+- **Sorting**: Correct sorting by `score` in descending order.
+- **Filtering**: Filtering of non-story items (`type == "comment"`, `deleted == true`, `dead == true`).
+- **URL Resolution**: Fallback URI resolution for internal discussion posts (Ask HN / Show HN without external URL).
+- **Date Formatting**: ISO 8601 UTC date string format (`yyyy-MM-ddTHH:mm:ss+00:00`).
+
+To run the tests:
+```bash
+dotnet test --logger "console;verbosity=detailed"
+```
 
 ---
 
