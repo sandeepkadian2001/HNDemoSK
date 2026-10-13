@@ -26,19 +26,6 @@ public class HackerNewsService : IHackerNewsService, IDisposable
     private readonly Lazy<Task<IReadOnlyList<int>>> _inFlightBestStoryIds;
 
     public HackerNewsService(
-        IHttpClientFactory httpClientFactory,
-        IMemoryCache cache,
-        IOptions<HackerNewsOptions> options,
-        ILogger<HackerNewsService> logger)
-        : this(
-            (httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory))).CreateClient("HackerNews"),
-            cache,
-            options,
-            logger)
-    {
-    }
-
-    public HackerNewsService(
         HttpClient httpClient,
         IMemoryCache cache,
         IOptions<HackerNewsOptions> options,
@@ -93,16 +80,11 @@ public class HackerNewsService : IHackerNewsService, IDisposable
         try
         {
             _logger.LogInformation("Warming up Hacker News story cache with all best stories...");
-            var storyIds = await FetchBestStoryIdsFromApiAsync(cancellationToken);
+            // Use GetBestStoryIdsAsync to respect cache and singleflight deduplication
+            var storyIds = await GetBestStoryIdsAsync(cancellationToken);
             if (storyIds != null && storyIds.Count > 0)
             {
-                // Store IDs in cache
-                _cache.Set(
-                    BestStoryIdsCacheKey,
-                    storyIds,
-                    TimeSpan.FromMinutes(_options.BestStoriesCacheDurationMinutes));
-
-                // Load ALL stories returned by FetchBestStoryIdsFromApiAsync to warm the cache to speed up subsequent queries
+                // Load ALL stories returned by GetBestStoryIdsAsync to warm the cache to speed up subsequent queries
                 var tasks = storyIds.Select(id => GetStoryByIdAsync(id, cancellationToken));
                 await Task.WhenAll(tasks);
 
