@@ -26,7 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
             Hacker News Best Stories
           </span>
           <span className="text-xs text-slate-400 font-mono hidden sm:inline">
-            ASP.NET Core 8 API
+            ASP.NET Core 10 (.NET 10)
           </span>
         </div>
       </div>

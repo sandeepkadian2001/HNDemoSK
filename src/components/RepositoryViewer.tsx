@@ -52,7 +52,7 @@ export const RepositoryViewer: React.FC<RepositoryViewerProps> = ({
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-slate-100">
-              ASP.NET Core 8 Solution Codebase
+              ASP.NET Core 10 (.NET 10) Solution Codebase
             </span>
             <span className="text-[11px] font-mono px-2 py-0.5 bg-blue-950 text-blue-400 rounded border border-blue-800/60">
               Clean Architecture

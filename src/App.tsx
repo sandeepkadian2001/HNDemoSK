@@ -166,7 +166,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span>Hacker News Best Stories API</span>
             <span aria-hidden="true">·</span>
-            <span>ASP.NET Core 8 & C#</span>
+            <span>ASP.NET Core 10 & .NET 10</span>
             <span aria-hidden="true">·</span>
             <span>Overload Protection Enabled</span>
           </div>

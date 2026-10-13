@@ -1,10 +1,10 @@
 # Hacker News Best Stories RESTful API
 
-[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com/)
 
-A high-performance, resilient RESTful API built with **ASP.NET Core 8** that retrieves and ranks the best *n* stories from the official [Hacker News Firebase API](https://github.com/HackerNews/API), ordered by their score descending.
+A high-performance, resilient RESTful API built with **ASP.NET Core 10** (.NET 10) that retrieves and ranks the best *n* stories from the official [Hacker News Firebase API](https://github.com/HackerNews/API), ordered by their score descending.
 
 ---
 
@@ -83,7 +83,7 @@ To eliminate these risks, the application implements a multi-tiered defense:
 
 ## Prerequisites
 
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or later.
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) or later.
 - [Docker](https://www.docker.com/) (optional, for containerized run).
 
 ---
